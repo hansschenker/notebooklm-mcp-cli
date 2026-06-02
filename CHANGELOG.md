@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.15] - 2026-06-01
+
+### Fixed
+
+- **Auth-guard stale-TTL window when tokens change on disk during the cached period** — The 60s auth-guard introduced in 0.6.14 cached the "auth is valid" result for 60s. If you ran `nlm login` (or any flow that rewrote the auth file) during that window, the guard would still report valid and your server would use the stale tokens until the TTL elapsed. Fixed by `services.auth.get_active_auth_mtime()`: the guard now records the latest mtime of the active auth storage (the legacy `auth.json` plus every `cookies.json` under `profiles/`) and invalidates the cache when any of them changes. A write to ANY profile's file invalidates the guard, regardless of which profile the CLI/MCP session is using. 5 new tests cover modern profile layout, legacy fallback, mid-migration (both files exist), fresh install (no files), and config-error defensiveness.
+
+- **Auth-guard mtime check was watching the wrong file (caught by live testing)** — The first iteration of the mtime fix only watched the config's `default_profile`'s `cookies.json`. But the active profile for a CLI/MCP session can be overridden with `--profile`, while the config-level `default_profile` stays put. If you ran `nlm login --profile <other>` externally, the active profile's `cookies.json` would be rewritten but the guard never saw it. The fix above resolves this by globbing all `profiles/*/cookies.json` files. Live testing against a real Chrome login + real NotebookLM API confirmed the fix.
+
+### Changed
+
+- **`services/auth.py` is now a full shim, not a single-symbol re-export** — The 0.6.14 release added `services/auth.py` to route `check_auth` through the services layer. This release extends it to cover all 6 auth symbols that the cli/ and mcp/ layers were importing directly from `core/`: `check_auth`, `load_cached_tokens`, `save_tokens_to_cache`, `get_cache_path`, `validate_cookies`, plus the two class symbols `AuthTokens` and `AuthManager` via PEP 562 `__getattr__`. The shim is a thin layer with no business logic of its own; behavior is unchanged. The only remaining direct `core.auth` import in cli/ or mcp/ is in `utils/cdp.py`, which has a circular-import guard and is explicitly outside the layering rule's scope.
+
 ## [0.6.14] - 2026-06-01
 
 ### Fixed
