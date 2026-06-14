@@ -25,7 +25,7 @@ from notebooklm_tools.utils.config import get_base_url
 from . import constants
 from .data_types import ConversationTurn
 from .errors import ClientAuthenticationError as AuthenticationError
-from .errors import ResourceExhaustedError, RPCError
+from .errors import ResourceExhaustedError, RPCDriftError, RPCError
 from .retry import DEFAULT_BASE_DELAY, DEFAULT_MAX_DELAY, DEFAULT_MAX_RETRIES, is_retryable_error
 from .utils import (
     RPC_NAMES,
@@ -687,6 +687,9 @@ class BaseClient:
                                 except json.JSONDecodeError:
                                     return result_str
                             return result_str
+        present = self._extract_present_rpc_ids(parsed_response)
+        if present and rpc_id not in present:
+            raise RPCDriftError(rpc_id, present)
         return None
 
     def _extract_present_rpc_ids(self, parsed_response: list) -> list[str]:
