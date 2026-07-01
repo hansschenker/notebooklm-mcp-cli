@@ -564,6 +564,15 @@ def _get_process_cmdline(pid: int) -> str | None:
     return None
 
 
+def _get_cmdline_flag_value(cmdline: str, flag: str) -> str | None:
+    """Extract a command-line flag value from raw process command text."""
+    pattern = rf"(?:^|\s){re.escape(flag)}(?:=|\s+)(?:\"([^\"]*)\"|'([^']*)'|(\S+))"
+    match = re.search(pattern, cmdline)
+    if not match:
+        return None
+    return next(group for group in match.groups() if group is not None)
+
+
 def _mapped_chrome_owns_profile(pid: int | None, profile_name: str, port: int) -> bool:
     """Return True when the mapped PID was launched with this profile's user-data-dir."""
     if pid is None:
@@ -584,20 +593,13 @@ def _mapped_chrome_owns_profile(pid: int | None, profile_name: str, port: int) -
 
     normalized_cmdline = cmdline.replace("\\", "/")
     profile_path = str(profile_dir).replace("\\", "/")
-    port_flag = f"--remote-debugging-port={port}"
+    debug_port = _get_cmdline_flag_value(normalized_cmdline, "--remote-debugging-port")
+    user_data_dir = _get_cmdline_flag_value(normalized_cmdline, "--user-data-dir")
 
-    if port_flag not in normalized_cmdline:
+    if debug_port != str(port):
         return False
 
-    # Match --user-data-dir=... with optional quotes around the path (common on Windows).
-    for prefix in (f"--user-data-dir={profile_path}", f'--user-data-dir="{profile_path}"'):
-        if prefix in normalized_cmdline:
-            return True
-
-    # Fallback: path appears as a standalone token (snap / unusual launchers).
-    return f" {profile_path}" in f" {normalized_cmdline}" or normalized_cmdline.endswith(
-        profile_path
-    )
+    return user_data_dir == profile_path
 
 
 def find_existing_nlm_chrome(

@@ -159,6 +159,23 @@ def test_mapped_chrome_owns_profile_rejects_foreign_user_data_dir(tmp_path, monk
         assert cdp._mapped_chrome_owns_profile(1234, "default", 9222) is False
 
 
+def test_mapped_chrome_owns_profile_rejects_prefix_matched_user_data_dir(tmp_path, monkeypatch):
+    profile_dir = tmp_path / "chrome-profile"
+    profile_dir.mkdir()
+    monkeypatch.setattr(
+        cdp,
+        "_get_profile_dir_for_launch",
+        lambda _chrome_path, _profile_name: profile_dir,
+    )
+    monkeypatch.setattr(cdp, "get_chrome_path", lambda: "/usr/bin/google-chrome")
+
+    cmdline = (
+        f"/usr/bin/google-chrome --remote-debugging-port=9222 --user-data-dir={profile_dir}-other"
+    )
+    with patch.object(cdp, "_get_process_cmdline", return_value=cmdline):
+        assert cdp._mapped_chrome_owns_profile(1234, "default", 9222) is False
+
+
 def test_mapped_chrome_owns_profile_fails_closed_when_cmdline_unavailable(tmp_path, monkeypatch):
     profile_dir = tmp_path / "nlm-profile"
     profile_dir.mkdir()
@@ -184,6 +201,21 @@ def test_mapped_chrome_owns_profile_rejects_pid_on_wrong_debug_port(tmp_path, mo
     monkeypatch.setattr(cdp, "get_chrome_path", lambda: "/usr/bin/google-chrome")
 
     cmdline = f"/usr/bin/google-chrome --remote-debugging-port=9223 --user-data-dir={profile_dir}"
+    with patch.object(cdp, "_get_process_cmdline", return_value=cmdline):
+        assert cdp._mapped_chrome_owns_profile(1234, "default", 9222) is False
+
+
+def test_mapped_chrome_owns_profile_rejects_prefix_matched_debug_port(tmp_path, monkeypatch):
+    profile_dir = tmp_path / "nlm-profile"
+    profile_dir.mkdir()
+    monkeypatch.setattr(
+        cdp,
+        "_get_profile_dir_for_launch",
+        lambda _chrome_path, _profile_name: profile_dir,
+    )
+    monkeypatch.setattr(cdp, "get_chrome_path", lambda: "/usr/bin/google-chrome")
+
+    cmdline = f"/usr/bin/google-chrome --remote-debugging-port=92222 --user-data-dir={profile_dir}"
     with patch.object(cdp, "_get_process_cmdline", return_value=cmdline):
         assert cdp._mapped_chrome_owns_profile(1234, "default", 9222) is False
 
