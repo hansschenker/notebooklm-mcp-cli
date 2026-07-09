@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-07-09
+
+### Fixed
+
+- **Hardened CDP auth and Windows test failures (PR #253)** — Eliminated a redundant lock-reset in `cdp.py` that created a race condition where a newly opened WebSocket could be prematurely closed. Thanks to **@insane66613** for the PR!
+- **Test storage isolation** — Added `conftest.py` with autouse fixtures to isolate test execution from user storage, preventing tests from silently overwriting real user credentials in `~/.notebooklm-mcp-cli/auth.json`. (Cherry-picked from PR #252)
+
 ## [0.8.3] - 2026-07-05
 
 ### Added
