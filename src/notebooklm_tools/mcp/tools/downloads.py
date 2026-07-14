@@ -4,7 +4,7 @@ import asyncio
 
 from ...services import ServiceError, ValidationError
 from ...services import downloads as downloads_service
-from ._utils import ResultDict, error_result, get_client, logged_tool
+from ._utils import ResultDict, coerce_list, error_result, get_client, logged_tool
 
 
 @logged_tool()
@@ -66,6 +66,66 @@ def download_artifact(
         if message.startswith("Unknown artifact type "):
             message = message.replace("Unknown artifact type", "Unknown artifact_type", 1)
         return error_result(message)
+    except ServiceError as e:
+        return error_result(e.user_message, hint=e.hint)
+    except Exception as e:
+        return error_result(str(e))
+
+
+@logged_tool()
+def download_all_artifacts(
+    notebook_id: str,
+    output_dir: str = ".",
+    artifact_types: list[str] | str | None = None,
+    output_format: str = "json",
+    slide_deck_format: str = "pdf",
+) -> ResultDict:
+    """Download all completed studio artifacts of a notebook in one call.
+
+    Creates a subdirectory of output_dir named after the notebook title and
+    saves every completed artifact there, named after its title with the
+    type's default extension (report → .md, mind_map → .json, video → .mp4,
+    slide_deck → .pdf/.pptx, ...). Artifacts that are still generating or
+    failed are skipped and listed in the result. A failure on one artifact
+    does not stop the others.
+
+    Args:
+        notebook_id: Notebook UUID
+        output_dir: Base directory for the per-notebook folder (default: cwd)
+        artifact_types: Restrict to these types, e.g. ["video", "slide_deck",
+            "mind_map", "report"]. Default: all types.
+        output_format: For quiz/flashcards only: json|markdown|html
+        slide_deck_format: For slide decks only: pdf (default) or pptx
+
+    Returns:
+        dict with status, output_dir, per-artifact items, skipped artifacts,
+        and downloaded/failed counts
+
+    Example:
+        download_all_artifacts(notebook_id="abc123", output_dir="exports")
+        download_all_artifacts(notebook_id="abc123", artifact_types=["video", "report"])
+    """
+    try:
+        client = get_client()
+        result = asyncio.run(
+            downloads_service.download_all(
+                client,
+                notebook_id,
+                output_dir,
+                artifact_types=coerce_list(artifact_types),
+                output_format=output_format,
+                slide_deck_format=slide_deck_format,
+            )
+        )
+        if result["failed"] == 0:
+            status = "success"
+        elif result["downloaded"] > 0:
+            status = "partial"
+        else:
+            status = "error"
+        return {"status": status, **result}
+    except ValidationError as e:
+        return error_result(str(e))
     except ServiceError as e:
         return error_result(e.user_message, hint=e.hint)
     except Exception as e:

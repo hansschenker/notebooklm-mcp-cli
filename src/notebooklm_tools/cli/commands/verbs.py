@@ -25,6 +25,7 @@ from notebooklm_tools.cli.commands.config import (
     show_config,
 )
 from notebooklm_tools.cli.commands.download import (
+    download_all_cmd,
     download_audio,
     download_data_table,
     download_infographic,
@@ -921,6 +922,39 @@ def configure_chat_verb(
 # =============================================================================
 
 download_app = typer.Typer(help="Download studio artifacts")
+
+
+@download_app.command("all")
+def download_all_verb(
+    notebook: str = typer.Argument(..., help="Notebook ID or alias"),
+    output_dir: str = typer.Option(
+        ".",
+        "--output-dir",
+        "-d",
+        help="Base directory; a subdirectory named after the notebook is created inside",
+    ),
+    types: str | None = typer.Option(
+        None, "--types", "-t", help="Comma-separated artifact types (default: all)"
+    ),
+    slide_format: str = typer.Option(
+        "pdf", "--slide-format", help="Slide deck format: pdf (default) or pptx"
+    ),
+    interactive_format: str = typer.Option(
+        "json", "--interactive-format", help="Quiz/flashcards format: json, markdown, or html"
+    ),
+    no_progress: bool = typer.Option(False, "--no-progress", help="Disable download progress bars"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output result as JSON"),
+) -> None:
+    """Download all completed artifacts of a notebook into a per-notebook directory."""
+    download_all_cmd(
+        notebook_id=notebook,
+        output_dir=output_dir,
+        types=types,
+        slide_format=slide_format,
+        interactive_format=interactive_format,
+        no_progress=no_progress,
+        json_output=json_output,
+    )
 
 
 @download_app.command("audio")

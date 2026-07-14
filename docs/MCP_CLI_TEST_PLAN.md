@@ -684,6 +684,24 @@ Download slide deck from notebook [notebook_id]:
 
 ---
 
+### Test 6.6 - Download All Artifacts
+**Tool:** `download_all_artifacts`
+**CLI:** `nlm download all [notebook_id] --output-dir /tmp/exports`
+
+**Prompt:**
+```
+Download all completed artifacts from notebook [notebook_id]:
+- output_dir: /tmp/exports
+```
+
+**Expected:** A subdirectory named after the notebook title created under the
+output dir, containing every completed artifact named after its title
+(report → .md, mind_map → .json, video → .mp4, slide_deck → .pdf, ...).
+In-progress/failed artifacts are listed as skipped; result reports
+downloaded/failed/skipped counts. Also test `--types video,report` filtering.
+
+---
+
 ## Test Group 7: Sharing
 
 ### Test 7.1 - Get Share Status
@@ -917,7 +935,7 @@ Get NotebookLM MCP server version and check for updates.
 
 ---
 
-## Summary: 29 Consolidated Tools
+## Summary: 30 Consolidated Tools
 
 | Category | Tools | Count |
 |----------|-------|-------|
@@ -927,12 +945,12 @@ Get NotebookLM MCP server version and check for updates.
 | **Sharing** | `notebook_share_status`, `notebook_share_public`, `notebook_share_invite` | 3 |
 | **Research** | `research_start`, `research_status`, `research_import` | 3 |
 | **Studio** | `studio_create`, `studio_status`, `studio_delete`, `studio_revise` | 4 |
-| **Downloads** | `download_artifact` | 1 |
+| **Downloads** | `download_artifact`, `download_all_artifacts` | 2 |
 | **Exports** | `export_artifact` | 1 |
 | **Chat** | `notebook_query`, `chat_configure` | 2 |
 | **Notes** | `note` (unified: list, create, update, delete) | 1 |
 | **Server** | `server_info` | 1 |
-| **Total** | | **30** |
+| **Total** | | **31** |
 
 ---
 

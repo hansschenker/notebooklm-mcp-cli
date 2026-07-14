@@ -171,6 +171,7 @@ src/notebooklm_tools/
 | `research_import` | Import discovered sources into notebook (manual, if `auto_import` not used) |
 | `studio_create` | Generate unified content (audio, video, infographic, slides, etc.) |
 | `download_artifact` | Download any artifact (audio, video, pdf, markdown, json). Supports `wait`, `wait_timeout`, `poll_interval` params and returns `download_url` when MCP HTTP transport is active. |
+| `download_all_artifacts` | Download every completed artifact of a notebook into a per-notebook directory (named after the notebook title). Optional `artifact_types` filter; failures on one artifact don't stop the rest. CLI: `nlm download all` |
 | `export_artifact` | Export Data Tables to Google Sheets or Reports to Google Docs |
 | `studio_status` | Check studio artifact generation status |
 | `studio_delete` | Delete studio artifacts (REQUIRES confirmation) |

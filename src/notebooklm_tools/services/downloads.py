@@ -1,7 +1,8 @@
 """Downloads service — shared validation and routing for artifact downloads."""
 
 import inspect
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -9,6 +10,8 @@ from ..core.client import NotebookLMClient
 from ..core.errors import ArtifactDownloadError
 from ._compat import TypedDict
 from .errors import ServiceError, ValidationError
+from .notebooks import get_notebook
+from .studio import get_studio_status
 
 VALID_ARTIFACT_TYPES = (
     "audio",
@@ -56,6 +59,39 @@ class DownloadResult(TypedDict):
 
     artifact_type: str
     path: str
+
+
+class DownloadAllItem(TypedDict):
+    """Outcome of one artifact download attempted by download_all()."""
+
+    artifact_id: str | None
+    artifact_type: str
+    title: str
+    path: str
+    success: bool
+    error: str | None
+
+
+class SkippedArtifact(TypedDict):
+    """An artifact download_all() saw but did not attempt to download."""
+
+    artifact_id: str | None
+    artifact_type: str
+    title: str
+    reason: str
+
+
+class DownloadAllResult(TypedDict):
+    """Result of downloading all artifacts of a notebook."""
+
+    notebook_id: str
+    notebook_title: str
+    output_dir: str
+    items: list[DownloadAllItem]
+    skipped: list[SkippedArtifact]
+    total_artifacts: int
+    downloaded: int
+    failed: int
 
 
 # Directories that are always blocked as download targets, regardless of platform.
@@ -295,6 +331,207 @@ async def download_async(
         )
 
     return {"artifact_type": artifact_type, "path": saved_path}
+
+
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+# Windows reserves these device names regardless of extension (CON.md is invalid).
+_RESERVED_FILENAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def sanitize_filename(name: str, fallback: str = "untitled", max_length: int = 80) -> str:
+    """Turn an artifact/notebook title into a safe cross-platform file name.
+
+    Replaces characters invalid on Windows/POSIX, collapses whitespace, and
+    truncates. Returns ``fallback`` if nothing usable remains.
+    """
+    cleaned = re.sub(r"\s+", " ", name).strip()
+    cleaned = _INVALID_FILENAME_CHARS.sub("_", cleaned)
+    cleaned = cleaned[:max_length].rstrip(". ")
+    if cleaned.upper() in _RESERVED_FILENAMES:
+        cleaned = f"_{cleaned}"
+    return cleaned or fallback
+
+
+def validate_slide_deck_format(slide_deck_format: str) -> None:
+    """Validate slide deck file format. Raises ValidationError if invalid."""
+    if slide_deck_format not in ("pdf", "pptx"):
+        raise ValidationError(
+            f"Invalid slide deck format '{slide_deck_format}'. Valid formats: pdf, pptx",
+        )
+
+
+async def download_all(
+    client: NotebookLMClient,
+    notebook_id: str,
+    output_dir: str = ".",
+    artifact_types: Sequence[str] | None = None,
+    output_format: str = "json",
+    slide_deck_format: str = "pdf",
+    progress_factory: Callable[[str, str], Callable[[int, int], None] | None] | None = None,
+) -> DownloadAllResult:
+    """Download every completed studio artifact of a notebook.
+
+    Creates a subdirectory of ``output_dir`` named after the notebook title
+    and saves each artifact there, named after its title with the type's
+    default extension. Failures on individual artifacts are recorded and do
+    not stop the remaining downloads.
+
+    Args:
+        client: Authenticated NotebookLM client
+        notebook_id: Notebook UUID
+        output_dir: Base directory; the per-notebook directory is created inside
+        artifact_types: Restrict to these types (default: all valid types)
+        output_format: For quiz/flashcards: json|markdown|html
+        slide_deck_format: For slide decks: pdf (default) or pptx
+        progress_factory: Called with (artifact_type, filename) before each
+            streaming download; may return a (current, total) progress callback
+
+    Returns:
+        DownloadAllResult with per-artifact outcomes and summary counts
+
+    Raises:
+        ValidationError: If a requested type or format is invalid
+        ServiceError: If the artifact list cannot be retrieved
+    """
+    requested = tuple(artifact_types) if artifact_types else VALID_ARTIFACT_TYPES
+    for artifact_type in requested:
+        validate_artifact_type(artifact_type)
+    validate_output_format(output_format)
+    validate_slide_deck_format(slide_deck_format)
+
+    try:
+        notebook_title = get_notebook(client, notebook_id).get("title") or notebook_id
+    except Exception:
+        notebook_title = notebook_id
+
+    status = get_studio_status(client, notebook_id)
+
+    notebook_dir = Path(output_dir).expanduser() / sanitize_filename(
+        notebook_title, fallback=notebook_id
+    )
+    validate_output_path(str(notebook_dir))
+    notebook_dir.mkdir(parents=True, exist_ok=True)
+
+    items: list[DownloadAllItem] = []
+    skipped: list[SkippedArtifact] = []
+    used_names: set[str] = set()
+
+    for artifact in status["artifacts"]:
+        artifact_type = artifact.get("type") or "unknown"
+        title = artifact.get("title") or ""
+        artifact_id = artifact.get("artifact_id")
+
+        if artifact_type not in VALID_ARTIFACT_TYPES:
+            skipped.append(
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "title": title,
+                    "reason": f"unsupported artifact type '{artifact_type}'",
+                }
+            )
+            continue
+        if artifact_type not in requested:
+            skipped.append(
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "title": title,
+                    "reason": "type not requested",
+                }
+            )
+            continue
+        if artifact.get("status") != "completed":
+            skipped.append(
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "title": title,
+                    "reason": f"not completed (status: {artifact.get('status') or 'unknown'})",
+                }
+            )
+            continue
+
+        if artifact_type == "slide_deck":
+            ext = slide_deck_format
+        else:
+            ext = get_default_extension(artifact_type, output_format)
+        stem = sanitize_filename(title, fallback=artifact_type)
+        filename = f"{stem}.{ext}"
+        counter = 2
+        while filename in used_names:
+            filename = f"{stem}_{counter}.{ext}"
+            counter += 1
+        used_names.add(filename)
+        output_path = str(notebook_dir / filename)
+
+        progress_callback = None
+        if progress_factory is not None and artifact_type in STREAMING_TYPES:
+            progress_callback = progress_factory(artifact_type, filename)
+
+        try:
+            result = await download_async(
+                client,
+                notebook_id,
+                artifact_type,
+                output_path,
+                artifact_id=artifact_id,
+                output_format=output_format,
+                progress_callback=progress_callback,
+                slide_deck_format=slide_deck_format,
+            )
+            items.append(
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "title": title,
+                    "path": result["path"],
+                    "success": True,
+                    "error": None,
+                }
+            )
+        except ServiceError as e:
+            items.append(
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "title": title,
+                    "path": output_path,
+                    "success": False,
+                    "error": e.user_message or str(e),
+                }
+            )
+        except Exception as e:
+            items.append(
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": artifact_type,
+                    "title": title,
+                    "path": output_path,
+                    "success": False,
+                    "error": str(e),
+                }
+            )
+
+    downloaded = sum(1 for item in items if item["success"])
+    return {
+        "notebook_id": notebook_id,
+        "notebook_title": notebook_title,
+        "output_dir": str(notebook_dir),
+        "items": items,
+        "skipped": skipped,
+        "total_artifacts": status["total"],
+        "downloaded": downloaded,
+        "failed": len(items) - downloaded,
+    }
 
 
 def _dispatch_sync(
