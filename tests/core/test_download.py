@@ -412,3 +412,102 @@ class TestDownloadMindMapNoteFiltering:
                 mixin.download_mind_map("nb-1", str(tmp_path / "mm.json"))
         finally:
             patcher.stop()
+
+
+class TestStudioMindMapDownload:
+    """Mind maps stored as type-4 studio artifacts (format code 4)."""
+
+    _MM_HTML = (
+        '<div data-app-data="{&quot;name&quot;: &quot;Root&quot;, &quot;children&quot;: []}"></div>'
+    )
+
+    @staticmethod
+    def _raw_type4(artifact_id, title, format_code):
+        return [
+            artifact_id,
+            title,
+            4,
+            None,
+            3,
+            None,
+            None,
+            None,
+            None,
+            ["", [format_code, None, None, "en", None, None, None, None, True]],
+        ]
+
+    @staticmethod
+    def _mixin():
+        from unittest.mock import patch
+
+        from notebooklm_tools.core.download import DownloadMixin
+
+        with patch.object(DownloadMixin, "_refresh_auth_tokens"):
+            return DownloadMixin(cookies={"test": "cookie"}, csrf_token="test")
+
+    def test_download_mind_map_falls_back_to_studio_artifact(self, tmp_path):
+        import json as _json
+        from unittest.mock import patch
+
+        mixin = self._mixin()
+        raw = self._raw_type4("mm-9", "Studio Map", 4)
+        with (
+            patch.object(mixin, "_call_rpc", return_value=[[]]),  # notes store empty
+            patch.object(mixin, "_list_raw", return_value=[raw]),
+            patch.object(mixin, "_get_artifact_content", return_value=self._MM_HTML),
+        ):
+            out = mixin.download_mind_map("nb-1", str(tmp_path / "mm.json"), "mm-9")
+
+        assert out == str(tmp_path / "mm.json")
+        data = _json.loads((tmp_path / "mm.json").read_text(encoding="utf-8"))
+        assert data == {"name": "Root", "children": []}
+
+    def test_unqualified_download_uses_studio_when_notes_store_empty(self, tmp_path):
+        import json as _json
+        from unittest.mock import patch
+
+        mixin = self._mixin()
+        raw = self._raw_type4("mm-9", "Studio Map", 4)
+        with (
+            patch.object(mixin, "_call_rpc", return_value=[[]]),
+            patch.object(mixin, "_list_raw", return_value=[raw]),
+            patch.object(mixin, "_get_artifact_content", return_value=self._MM_HTML),
+        ):
+            out = mixin.download_mind_map("nb-1", str(tmp_path / "mm.json"))
+
+        data = _json.loads((tmp_path / "mm.json").read_text(encoding="utf-8"))
+        assert data["name"] == "Root"
+        assert out == str(tmp_path / "mm.json")
+
+    @pytest.mark.asyncio
+    async def test_flashcards_download_excludes_mind_maps(self, tmp_path):
+        from unittest.mock import patch
+
+        from notebooklm_tools.core.errors import ArtifactNotReadyError
+
+        mixin = self._mixin()
+        raw = self._raw_type4("mm-9", "Studio Map", 4)
+        with (
+            patch.object(mixin, "_list_raw", return_value=[raw]),
+            pytest.raises(ArtifactNotReadyError),
+        ):
+            await mixin.download_flashcards("nb-1", str(tmp_path / "cards.json"))
+
+    @pytest.mark.asyncio
+    async def test_quiz_download_still_finds_quiz(self, tmp_path):
+        from unittest.mock import patch
+
+        quiz_html = '<div data-app-data="{&quot;quiz&quot;: [{&quot;question&quot;: &quot;Q1&quot;}]}"></div>'
+        mixin = self._mixin()
+        raws = [
+            self._raw_type4("mm-9", "Studio Map", 4),
+            self._raw_type4("q-1", "The Quiz", 2),
+        ]
+        with (
+            patch.object(mixin, "_list_raw", return_value=raws),
+            patch.object(mixin, "_get_artifact_content", return_value=quiz_html) as mock_content,
+        ):
+            out = await mixin.download_quiz("nb-1", str(tmp_path / "quiz.json"))
+
+        assert out == str(tmp_path / "quiz.json")
+        assert mock_content.call_args[0][1] == "q-1"
